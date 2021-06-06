@@ -44,6 +44,7 @@
 extern "C" {
 #include "inject.h"
 }
+#include "binraw.h"
 #include "display.h"
 #include "dsCard.h"
 #include "ftplib.h"
@@ -1132,6 +1133,57 @@ void hwRestoreGBA()
 		std::vector<u8> storage_template(size);
 		fread(storage_template.data(), 1, size, f);
 		bin_inject(storage_template.data(), vpkdata, storage_vpkdata.size(), title.data());
+
+		// write to e-reader
+		if ((type == 4) || (type == 5)) {
+			displayMessage2F(STR_HW_FORMAT_GAME);
+			gbaFormatSave(type);
+		}
+
+		displayMessage2F(STR_HW_WRITE_GAME);
+		gbaWriteSave(0, storage_template.data(), size, type);
+
+		displayStateF(STR_STR, "Done!");
+
+		return;
+	}
+	if (strcmp(extension, "raw") == 0) {
+		// this is a .raw file
+		std::vector<std::vector<unsigned char>> raws;
+		std::vector<std::vector<unsigned char>> bins;
+
+		// read .raw into memory
+		long rawlength = get_filesize_and_reset(file);
+		raws.emplace_back(rawlength);
+		fread(raws.back().data(), 1, rawlength, file);
+
+		// convert to .bin
+		raw2bin(bins, raws);
+
+		if (bins.size() != raws.size()) {
+			// conversion failed
+			displayMessage2F(STR_HW_DID_DELETE);
+			while (!(keysCurrent() & (KEY_A))) {};
+			return;
+		}
+
+		// free memory for the raws
+		raws.resize(0);
+
+		// determine title for the injected thing
+		char* apptitle = strrchr(fullpath, '/') + 1;
+		size_t len = strlen(apptitle);
+		if (len >= 4) {
+			apptitle[len - 4] = 0;
+		}
+		std::array<u8, 35> title;
+		title.fill(0);
+		memcpy(title.data(), apptitle, len < 35 ? len : 35);
+
+		// inject into template
+		std::vector<u8> storage_template(size);
+		fread(storage_template.data(), 1, size, f);
+		bin_inject(storage_template.data(), bins[0].data(), bins[0].size(), title.data());
 
 		// write to e-reader
 		if ((type == 4) || (type == 5)) {
