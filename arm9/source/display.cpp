@@ -78,12 +78,12 @@ void displayPrintUpper(bool fc)
 	consoleSetWindow(&upperScreen, 0, 0, 32, 24);
 	consoleClear();
 	iprintf("e-Reader M\n");
-	iprintf("\nBased on DS save manager\n");
+	iprintf("Based on DS save manager\n");
 	iprintf("by Pokedoc, with modifications\n");
 	iprintf("by Admiral Curtiss\n");
 	iprintf("CRC Calculator and NEDCLIB\n");
 	iprintf("by CaitSith2\n");
-	//iprintf("Special  :\n");
+	iprintf(".raw support by Admiral Curtiss\n");
 	if (dstype == 1) {
 		// DSi mode
 		iprintf("--- SD-SLOT --------------------");
