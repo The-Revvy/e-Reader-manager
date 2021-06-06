@@ -24,6 +24,9 @@
  * 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
+#include <array>
+#include <vector>
+
 #include <nds.h>
 #include <fat.h>
 #include <nds/arm9/dldi.h>
@@ -41,6 +44,7 @@
 extern "C" {
 #include "inject.h"
 }
+#include "binraw.h"
 #include "display.h"
 #include "dsCard.h"
 #include "ftplib.h"
@@ -1046,29 +1050,56 @@ void hwBackupGBA(u8 type)
 	//while(1);
 }
 
+long get_filesize_and_reset(FILE* file) {
+	fseek(file, 0, SEEK_END);
+	long len = ftell(file);
+	fseek(file, 0, SEEK_SET);
+	return len;
+}
+
+struct FileGuard {
+	FILE* file;
+	explicit FileGuard(FILE* f) : file(f) {}
+	~FileGuard() { if (file) { fclose(file); } }
+};
+
 void hwRestoreGBA()
 {
-	//char *apptitle;
 	char extension[64];
-	
+
 	u8 type = gbaGetSaveType();
 	if ((type == 0) || (type > 5))
 		return;
-	
+
+	uint32 detected_size = gbaGetSaveSize(type);
+	if (detected_size != 0x20000) {
+		// not an e-reader
+		return;
+	}
+
 	if ((type == 1) || (type == 2)) {
 		// This is not to be translated, it will be removed at some point.
 		displayMessageF(STR_STR, "I can't write this save type\nyet. Please use Rudolphs tool\ninstead.");
 		return;
 	}
-	FILE *f = fopen("/ereader/template.sav","rb");
-		if(!f){
-			displayMessage2F(STR_HW_DID_DELETE);
-	while (!(keysCurrent() & (KEY_A))) {};
-		}
-		else{
-			fclose(f);
-	uint32 size = gbaGetSaveSize(type);
-	
+
+	// read template and make sure it's the right size
+	FILE* f = fopen("/ereader/template.sav", "rb");
+	if (!f) {
+		displayMessage2F(STR_HW_DID_DELETE);
+		while (!(keysCurrent() & (KEY_A))) {};
+		return;
+	}
+	FileGuard f_guard(f);
+	long templatelength = get_filesize_and_reset(f);
+	if (templatelength != 0x20000) {
+		displayMessage2F(STR_HW_DID_DELETE);
+		while (!(keysCurrent() & (KEY_A))) {};
+		return;
+	}
+	const uint32 size = 0x20000;
+
+	// open file to inject
 	char path[256];
 	char fname[256] = "";
 	fileSelect("/", path, fname, 0);
@@ -1076,69 +1107,102 @@ void hwRestoreGBA()
 	sprintf(fullpath, "%s/%s", path, fname);
 
 	displayMessage2F(STR_HW_READ_FILE, fname);
-	FILE *file = fopen(fullpath, "rb");
+	FILE* file = fopen(fullpath, "rb");
+	FileGuard file_guard(file);
 	sprintf(extension, get_filename_ext(fullpath));
-	if (strcmp(extension,"bin")!= 0){
-			displayMessage2F(STR_HW_FTP_SEEK_AP);
+	if (strcmp(extension, "bin") == 0) {
+		// this is a .bin file
+
+		// read .bin into memory
+		long vpklength = get_filesize_and_reset(file);
+		std::vector<u8> storage_vpkdata(vpklength);
+		u8* vpkdata = storage_vpkdata.data();
+		fread(vpkdata, 1, vpklength, file);
+
+		// determine title for the injected thing
+		char* apptitle = strrchr(fullpath, '/') + 1;
+		size_t len = strlen(apptitle);
+		if (len >= 4) {
+			apptitle[len - 4] = 0;
+		}
+		std::array<u8, 35> title;
+		title.fill(0);
+		memcpy(title.data(), apptitle, len < 35 ? len : 35);
+
+		// inject into template
+		std::vector<u8> storage_template(size);
+		fread(storage_template.data(), 1, size, f);
+		bin_inject(storage_template.data(), vpkdata, storage_vpkdata.size(), title.data());
+
+		// write to e-reader
+		if ((type == 4) || (type == 5)) {
+			displayMessage2F(STR_HW_FORMAT_GAME);
+			gbaFormatSave(type);
+		}
+
+		displayMessage2F(STR_HW_WRITE_GAME);
+		gbaWriteSave(0, storage_template.data(), size, type);
+
+		displayStateF(STR_STR, "Done!");
+
+		return;
+	}
+	if (strcmp(extension, "raw") == 0) {
+		// this is a .raw file
+		std::vector<std::vector<unsigned char>> raws;
+		std::vector<std::vector<unsigned char>> bins;
+
+		// read .raw into memory
+		long rawlength = get_filesize_and_reset(file);
+		raws.emplace_back(rawlength);
+		fread(raws.back().data(), 1, rawlength, file);
+
+		// convert to .bin
+		raw2bin(bins, raws);
+
+		if (bins.size() != raws.size()) {
+			// conversion failed
+			displayMessage2F(STR_HW_DID_DELETE);
+			while (!(keysCurrent() & (KEY_A))) {};
+			return;
+		}
+
+		// free memory for the raws
+		raws.resize(0);
+
+		// determine title for the injected thing
+		char* apptitle = strrchr(fullpath, '/') + 1;
+		size_t len = strlen(apptitle);
+		if (len >= 4) {
+			apptitle[len - 4] = 0;
+		}
+		std::array<u8, 35> title;
+		title.fill(0);
+		memcpy(title.data(), apptitle, len < 35 ? len : 35);
+
+		// inject into template
+		std::vector<u8> storage_template(size);
+		fread(storage_template.data(), 1, size, f);
+		bin_inject(storage_template.data(), bins[0].data(), bins[0].size(), title.data());
+
+		// write to e-reader
+		if ((type == 4) || (type == 5)) {
+			displayMessage2F(STR_HW_FORMAT_GAME);
+			gbaFormatSave(type);
+		}
+
+		displayMessage2F(STR_HW_WRITE_GAME);
+		gbaWriteSave(0, storage_template.data(), size, type);
+
+		displayStateF(STR_STR, "Done!");
+
+		return;
+	}
+
+	displayMessage2F(STR_HW_FTP_SEEK_AP);
 	while (!(keysCurrent() & (KEY_A))) {};
-	fclose(file);
-	}
-	else {
-
-			char *apptitle = strrchr(fullpath, '/') + 1;
-						size_t len = strlen(apptitle);
-						if (len >= 4) {
-							apptitle[len-4] = 0;
-						}
-					
-						FILE *titlebin = fopen("/ereader/tempgarfieldtitle.bin", "wb");
-						FILE *garfield = fopen("/ereader/tempgarfieldvpk.bin", "wb");
-						fseek(file, 0, SEEK_END);
-						long vpklength = ftell(file);
-						char *vpkdata =(char*)malloc(vpklength + 1);
-						fseek(file, 0, SEEK_SET);
-						fread(vpkdata, 1, vpklength, file);
-						fwrite(vpkdata, 1, vpklength, garfield);
-						int titlecounter = 0;
-							while (titlecounter < 35) {
-								fputc(0x00, titlebin);
-								titlecounter++;
-							}
-						fseek(titlebin, 0, SEEK_SET);
-						if (strlen(apptitle) > 35) {
-							fwrite(apptitle, 1, 35, titlebin);
-						}
-						else {
-							fwrite(apptitle, 1, strlen(apptitle), titlebin);
-						}
-						fclose(titlebin);
-						fclose(garfield);
-  
-		bin_inject();
-		fclose(file);
-		FILE *injectsav = fopen("/ereader/tempgarfieldinject.sav","rb");
-
-
-	fread(data, 1, size, injectsav);
-	fclose(injectsav);
-	
-	if ((type == 4) || (type == 5)) {
-		displayMessage2F(STR_HW_FORMAT_GAME);
-		gbaFormatSave(type);
-	}
-	
-	displayMessage2F(STR_HW_WRITE_GAME);
-	gbaWriteSave(0, data, size, type);
-
-	displayStateF(STR_STR, "Done!");
-	remove("/ereader/tempgarfieldinject.sav");
-/*
-	displayMessage2F(STR_HW_PLEASE_REBOOT);
-	while(1);
-	*/
 }
-}
-}
+
 void hwEraseGBA(u8 type)
 {
 

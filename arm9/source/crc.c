@@ -15,10 +15,8 @@ unsigned long Calc_crc(unsigned int size);
 unsigned long reflect (unsigned long crc, int bitnum);
 
 unsigned long crctab[256];
-
-
-unsigned char savdata[0x10000];
-unsigned char savheader[0x10000];
+unsigned char* savdata = 0;
+unsigned char* savheader = 0;
 
 
 unsigned long Calc_crc(unsigned int size)
@@ -88,31 +86,13 @@ void generate_crc_table() {
 	}
 }
 
-
-
-int crcaitsith()
+void crcaitsith(unsigned char* sav)
 {
-	unsigned int datasize=0;
+	unsigned int datasize = 0;
 	unsigned long CRC;
-	FILE *f;
 
-	//printf("Nintendo E-Reader save CRC calculator\n");
-	//printf("by CaitSith2\n\n");
-
-	//if(argc < 2)
-	
-	//	printf("Usage: savCRC.exe <Infile> [<Outfile]\n\n");
-	//	printf("<infile> = File to be corrected\n");
-	//	printf("<outfile> = corrected file to be outputted\n\n");
-	//	printf("If <outfile> is not specified, then the infile\n");
-	//	printf("will be used as the <outfile>\n");
-
-	
-	f=fopen("/ereader/tempgarfieldinject.bin","rb");
-
-	fread(savheader,1,0x10000,f);
-	fread(savdata,1,0x10000,f);
-	fclose(f);
+	savheader = sav;
+	savdata = sav + 0x10000;
 
 	datasize = savdata[0x2C];
 	datasize += savdata[0x2D] << 8;
@@ -124,19 +104,10 @@ int crcaitsith()
 	datasize += savdata[0x33] << 24;
 	datasize += 0x30;
 
-	CRC=Calc_crc(datasize);
+	CRC = Calc_crc(datasize);
 
 	savdata[3] = (CRC & 0xFF000000) >> 24;
 	savdata[2] = (CRC & 0x00FF0000) >> 16;
 	savdata[1] = (CRC & 0x0000FF00) >> 8;
 	savdata[0] = (CRC & 0x000000FF);
-
-	
-	f=fopen("/ereader/tempgarfieldinject.sav","wb");
-	fwrite(savheader,1,0x10000,f);
-	fwrite(savdata,1,0x10000,f);
-	fclose(f);
-	
-
-	return 0;
 }
